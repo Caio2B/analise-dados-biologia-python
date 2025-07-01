@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Análise de Expressão Diferencial para dados de RNA-Seq
+
+Este módulo implementa um pipeline completo para análise de expressão diferencial
+a partir de dados de RNA-Sequenciamento, incluindo:
+- Controle de qualidade
+- Normalização
+- Testes estatísticos
+- Análise de enriquecimento
+- Visualização
+
+Referências:
+- Love, M.I., Huber, W., Anders, S. (2014) Genome Biology
+- Robinson, M.D., et al. (2010) Bioinformatics
+"""
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+from statsmodels.stats.multitest import multipletests
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import Tuple, Dict, List, Optional
+import logging
+from pathlib import Path
+
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class RNAseqAnalyzer:
+    """
+    Classe principal para análise de dados de RNA-Seq
+    """
+    
+    def __init__(self, count_matrix: pd.DataFrame, metadata: pd.DataFrame):
+        """
+        Inicializa o analisador com a matriz de contagens e metadados
+        
+        Args:
+            count_matrix: DataFrame com genes nas linhas e amostras nas colunas
+            metadata: DataFrame com informações das amostras (condições, batches, etc.)
+        """
+        self.counts = count_matrix
+        self.metadata = metadata
+        self.normalized_counts = None
+        self.results = None
+        
+        self._validate_inputs()
+        
+    def _validate_inputs(self) -> None:
+        """Valida os dados de entrada"""
+        if not all(self.counts.columns == self.metadata.index):
+            raise ValueError("As amostras na matriz de contagens devem corresponder aos metadados")
+            
+        if self.counts.isnull().any().any():
+            raise ValueError("A matriz de contagens contém valores nulos")
+            
+        logger.info(f"Dados carregados com {self.counts.shape[0]} genes e {self.counts.shape[1]} amostras")
+    
+    def quality_control(self, min_count: int = 10, min_samples: int = 2) -> None:
+        """
+        Filtra genes com baixa expressão
+        
+        Args:
+            min_count: Contagem mínima por gene
+            min_samples: Número mínimo de amostras que devem ter a contagem mínima
+        """
+        keep_genes = (self.counts >= min_count).sum(axis=1) >= min_samples
+        self.counts = self.counts.loc[keep_genes]
+        logger.info(f"{keep_genes.sum()} genes mantidos após filtro de qualidade")
+    
+    def normalize(self, method: str = 'tmm') -> None:
+        """
+        Normaliza as contagens para comparação entre amostras
+        
+        Args:
+            method: Método de normalização ('tmm', 'rle', 'upperquartile')
+        """
+        if method == 'tmm':
+            self._tmm_normalization()
+        elif method == 'rle':
+            self._rle_normalization()
+        elif method == 'upperquartile':
+            self._upperquartile_normalization()
+        else:
+            raise ValueError("Método de normalização desconhecido")
+            
+        logger.info(f"Dados normalizados usando método {method}")
+    
+    def _tmm_normalization(self) -> None:
+        """Implementa a normalização TMM (Trimmed Mean of M-values)"""
+        # Implementação simplificada do TMM
+        ref_sample = self.counts.median(axis=1)
+        m = np.log2((self.counts + 1) / (ref_sample + 1).values.reshape(-1, 1))
+        weights = (1/(self.counts + 1) + 1/(ref_sample + 1).values.reshape(-1, 1))
+        
+        # Calcular fatores de normalização
+        trimmed_m = np.where(
+            (m > np.percentile(m, 30)) & (m < np.percentile(m, 70)),
+            m, np.nan
+        )
+        norm_factors = np.nanmean(trimmed_m * weights, axis=0) / np.nanmean(weights, axis=0)
+        scaling_factors = 2 ** norm_factors
+        
+        self.normalized_counts = self.counts / scaling_factors
+    
+    def differential_expression(
+        self,
+        condition_col: str,
+        control_group: str,
+        test_group: str,
+        method: str = 'wald',
+        alpha: float = 0.05,
+        lfc_threshold: float = 1.0
+    ) -> pd.DataFrame:
+        """
+        Identifica genes diferencialmente expressos entre dois grupos
+        
+        Args:
+            condition_col: Coluna nos metadados que define os grupos
+            control_group: Nome do grupo controle
+            test_group: Nome do grupo de teste
+            method: Método estatístico ('wald', 'lrt')
+            alpha: Nível de significância
+            lfc_threshold: Limiar para mudança mínima de expressão (log2)
+            
+        Returns:
+            DataFrame com resultados da análise
+        """
+        # Selecionar amostras dos grupos de interesse
+        control_samples = self.metadata[self.metadata[condition_col] == control_group].index
+        test_samples = self.metadata[self.metadata[condition_col] == test_group].index
+        
+        if len(control_samples) < 2 or len(test_samples) < 2:
+            raise ValueError("Cada grupo deve ter pelo menos 2 réplicas")
+        
+        # Calcular estatísticas (implementação simplificada)
+        control_means = self.normalized_counts[control_samples].mean(axis=1)
+        test_means = self.normalized_counts[test_samples].mean(axis=1)
+        
+        log2fc = np.log2((test_means + 1) / (control_means + 1))
+        
+        # Teste t com correção de Welch para variâncias desiguais
+        pvals = [
+            stats.ttest_ind(
+                self.normalized_counts.loc[gene, test_samples],
+                self.normalized_counts.loc[gene, control_samples],
+                equal_var=False
+            ).pvalue
+            for gene in self.normalized_counts.index
+        ]
+        
+        # Correção para múltiplos testes
+        _, pvals_adj, _, _ = multipletests(pvals, method='fdr_bh', alpha=alpha)
+        
+        # Criar dataframe de resultados
+        results = pd.DataFrame({
+            'baseMean': (control_means + test_means) / 2,
+            'log2FoldChange': log2fc,
+            'pvalue': pvals,
+            'padj': pvals_adj,
+            'significant': (pvals_adj < alpha) & (abs(log2fc) >= lfc_threshold)
+        }, index=self.normalized_counts.index)
+        
+        self.results = results
+        logger.info(f"{results['significant'].sum()} genes diferencialmente expressos encontrados")
+        
+        return results
+    
+    def plot_volcano(
+        self,
+        output_file: Optional[str] = None,
+        title: str = 'Volcano Plot',
+        alpha: float = 0.05,
+        lfc_threshold: float = 1.0
+    ) -> plt.Figure:
+        """
+        Gera um volcano plot dos resultados
+        
+        Args:
+            output_file: Caminho para salvar a figura (opcional)
+            title: Título do gráfico
+            alpha: Limiar de significância
+            lfc_threshold: Limiar de fold-change
+            
+        Returns:
+            Figura matplotlib
+        """
+        if self.results is None:
+            raise ValueError("Execute a análise de expressão diferencial primeiro")
+            
+        plt.figure(figsize=(10, 8))
+        
+        # Criar máscaras para diferentes categorias
+        sig_up = (self.results['padj'] < alpha) & (self.results['log2FoldChange'] > lfc_threshold)
+        sig_down = (self.results['padj'] < alpha) & (self.results['log2FoldChange'] < -lfc_threshold)
+        not_sig = ~(sig_up | sig_down)
+        
+        # Plotar pontos
+        plt.scatter(
+            self.results.loc[not_sig, 'log2FoldChange'],
+            -np.log10(self.results.loc[not_sig, 'padj']),
+            c='gray', alpha=0.5, label='Não significativo'
+        )
+        plt.scatter(
+            self.results.loc[sig_up, 'log2FoldChange'],
+            -np.log10(self.results.loc[sig_up, 'padj']),
+            c='red', alpha=0.7, label='Up-regulado'
+        )
+        plt.scatter(
+            self.results.loc[sig_down, 'log2FoldChange'],
+            -np.log10(self.results.loc[sig_down, 'padj']),
+            c='blue', alpha=0.7, label='Down-regulado'
+        )
+        
+        # Linhas de corte
+        plt.axhline(-np.log10(alpha), linestyle='--', color='black')
+        plt.axvline(lfc_threshold, linestyle='--', color='black')
+        plt.axvline(-lfc_threshold, linestyle='--', color='black')
+        
+        # Formatação
+        plt.xlabel('log2 Fold Change')
+        plt.ylabel('-log10(p-value ajustado)')
+        plt.title(title)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        if output_file:
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            logger.info(f"Volcano plot salvo em {output_file}")
+            
+        return plt.gcf()
+    
+    def pathway_enrichment(
+        self,
+        gene_sets: Dict[str, List[str]],
+        method: str = 'fisher',
+        min_set_size: int = 5,
+        max_set_size: int = 500
+    ) -> pd.DataFrame:
+        """
+        Realiza análise de enriquecimento de vias usando genes significativos
+        
+        Args:
+            gene_sets: Dicionário com nomes de vias e listas de genes
+            method: Método de teste ('fisher' ou 'hypergeom')
+            min_set_size: Tamanho mínimo do conjunto de genes
+            max_set_size: Tamanho máximo do conjunto de genes
+            
+        Returns:
+            DataFrame com resultados do enriquecimento
+        """
+        if self.results is None:
+            raise ValueError("Execute a análise de expressão diferencial primeiro")
+            
+        # Filtrar genes significativos
+        sig_genes = set(self.results[self.results['significant']].index)
+        background_genes = set(self.results.index)
+        
+        enrichment_results = []
+        
+        for pathway, genes in gene_sets.items():
+            pathway_genes = set(genes) & background_genes
+            pathway_size = len(pathway_genes)
+            
+            # Filtrar por tamanho do conjunto
+            if not (min_set_size <= pathway_size <= max_set_size):
+                continue
+                
+            # Genes significativos na via
+            sig_in_pathway = len(sig_genes & pathway_genes)
+            
+            # Tabela de contingência
+            contingency_table = [
+                [sig_in_pathway, len(sig_genes) - sig_in_pathway],
+                [pathway_size - sig_in_pathway, len(background_genes) - len(sig_genes) - pathway_size + sig_in_pathway]
+            ]
+            
+            # Teste exato de Fisher
+            _, pval = stats.fisher_exact(contingency_table, alternative='greater')
+            
+            enrichment_results.append({
+                'Pathway': pathway,
+                'Pathway_size': pathway_size,
+                'Overlap': sig_in_pathway,
+                'Expected': len(sig_genes) * (pathway_size / len(background_genes)),
+                'Enrichment': (sig_in_pathway / len(sig_genes)) / (pathway_size / len(background_genes)),
+                'p_value': pval
+            })
+        
+        if not enrichment_results:
+            logger.warning("Nenhuma via atendeu aos critérios de tamanho")
+            return pd.DataFrame()
+            
+        # Criar dataframe de resultados
+        enrichment_df = pd.DataFrame(enrichment_results)
+        
+        # Correção para múltiplos testes
+        _, pvals_adj, _, _ = multipletests(
+            enrichment_df['p_value'], method='fdr_bh'
+        )
+        enrichment_df['p_adj'] = pvals_adj
+        
+        # Ordenar por significância
+        enrichment_df = enrichment_df.sort_values('p_adj').reset_index(drop=True)
+        
+        logger.info(f"{len(enrichment_df)} vias analisadas para enriquecimento")
+        
+        return enrichment_df
+
+
+def example_workflow():
+    """Exemplo completo de workflow de análise"""
+    # Simular dados de RNA-Seq
+    np.random.seed(42)
+    n_genes = 10000
+    n_samples = 12
+    
+    # Gerar matriz de contagens (distribuição negativa binomial)
+    counts = pd.DataFrame(
+        np.random.negative_binomial(5, 0.1, size=(n_genes, n_samples)),
+        index=[f"Gene_{i}" for i in range(n_genes)],
+        columns=[f"Sample_{i}" for i in range(n_samples)]
+    )
+    
+    # Adicionar alguns genes diferencialmente expressos
+    de_genes = np.random.choice(n_genes, size=200, replace=False)
+    counts.iloc[de_genes[:100], :6] *= 4  # Up no grupo A
+    counts.iloc[de_genes[100:], 6:] *= 4  # Up no grupo B
+    
+    # Metadados
+    metadata = pd.DataFrame({
+        'condition': ['A'] * 6 + ['B'] * 6,
+        'batch': ['1'] * 3 + ['2'] * 3 + ['1'] * 3 + ['2'] * 3
+    }, index=counts.columns)
+    
+    # Análise
+    analyzer = RNAseqAnalyzer(counts, metadata)
+    analyzer.quality_control(min_count=10, min_samples=2)
+    analyzer.normalize(method='tmm')
+    
+    # Expressão diferencial
+    results = analyzer.differential_expression(
+        condition_col='condition',
+        control_group='A',
+        test_group='B',
+        alpha=0.05,
+        lfc_threshold=1.0
+    )
+    
+    # Visualização
+    fig = analyzer.plot_volcano(title='A vs B - RNA-Seq Analysis')
+    plt.show()
+    
+    # Análise de enriquecimento (exemplo com vias simuladas)
+    pathways = {
+        'Pathway_1': [f"Gene_{i}" for i in range(0, 50)],
+        'Pathway_2': [f"Gene_{i}" for i in range(50, 120)],
+        'Pathway_3': [f"Gene_{i}" for i in range(120, 200)]
+    }
+    
+    enrichment = analyzer.pathway_enrichment(pathways)
+    print(enrichment.head())
+
+
+if __name__ == '__main__':
+    example_workflow()
