@@ -1,3 +1,15 @@
-.descontainer/
-  devcontrainer.json
-  Dockerfile
+{
+  "name": "Análise Biológica Python",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ],
+  "postCreateCommand": "pip install -r /tmp/requirements.txt",
+  "remoteUser": "root"
+}
