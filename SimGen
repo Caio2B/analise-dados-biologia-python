@@ -1,0 +1,12 @@
+import random
+
+def cruzar(p1, p2):
+    filhos = []
+    for _ in range(1000):
+        alelo1 = random.choice(p1)
+        alelo2 = random.choice(p2)
+        filhos.append("".join(sorted(alelo1 + alelo2)))
+    return filhos
+
+resultado = cruzar("Aa", "Aa")
+print({genotipo: resultado.count(genotipo) for genotipo in set(resultado)})
