@@ -1,0 +1,34 @@
+bio_data_analysis/
+├── data_processing/          # Módulos para pré-processamento de dados
+│   ├── quality_control.py
+│   ├── normalization.py
+│   └── feature_selection.py
+├── statistical_analysis/     # Análises estatísticas
+│   ├── differential_expression.py
+│   ├── enrichment_analysis.py
+│   └── clustering.py
+├── visualization/            # Visualização de dados biológicos
+│   ├── heatmaps.py
+│   ├── volcano_plots.py
+│   └── pathway_visualization.py
+├── machine_learning/         # Modelos de ML para biologia
+│   ├── supervised_learning.py
+│   ├── unsupervised_learning.py
+│   └── model_evaluation.py
+├── utils/                    # Utilitários
+│   ├── file_handling.py
+│   ├── bioinformatics.py
+│   └── progress_tracking.py
+├── tests/                    # Testes unitários
+│   ├── test_data_processing.py
+│   ├── test_statistical.py
+│   └── test_ml_models.py
+├── examples/                 # Notebooks de exemplo
+│   ├── rna_seq_analysis.ipynb
+│   └── protein_analysis.ipynb
+├── docs/                     # Documentação
+│   ├── api_reference.md
+│   └── tutorials.md
+├── requirements.txt          # Dependências
+├── LICENSE
+└── README.md
