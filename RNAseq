@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 Análise de Expressão Diferencial para dados de RNA-Seq
 
@@ -28,7 +25,6 @@ from typing import Tuple, Dict, List, Optional
 import logging
 from pathlib import Path
 
-# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -103,7 +99,6 @@ class RNAseqAnalyzer:
         m = np.log2((self.counts + 1) / (ref_sample + 1).values.reshape(-1, 1))
         weights = (1/(self.counts + 1) + 1/(ref_sample + 1).values.reshape(-1, 1))
         
-        # Calcular fatores de normalização
         trimmed_m = np.where(
             (m > np.percentile(m, 30)) & (m < np.percentile(m, 70)),
             m, np.nan
@@ -143,13 +138,11 @@ class RNAseqAnalyzer:
         if len(control_samples) < 2 or len(test_samples) < 2:
             raise ValueError("Cada grupo deve ter pelo menos 2 réplicas")
         
-        # Calcular estatísticas (implementação simplificada)
-        control_means = self.normalized_counts[control_samples].mean(axis=1)
+    control_means = self.normalized_counts[control_samples].mean(axis=1)
         test_means = self.normalized_counts[test_samples].mean(axis=1)
         
         log2fc = np.log2((test_means + 1) / (control_means + 1))
         
-        # Teste t com correção de Welch para variâncias desiguais
         pvals = [
             stats.ttest_ind(
                 self.normalized_counts.loc[gene, test_samples],
@@ -159,10 +152,8 @@ class RNAseqAnalyzer:
             for gene in self.normalized_counts.index
         ]
         
-        # Correção para múltiplos testes
         _, pvals_adj, _, _ = multipletests(pvals, method='fdr_bh', alpha=alpha)
         
-        # Criar dataframe de resultados
         results = pd.DataFrame({
             'baseMean': (control_means + test_means) / 2,
             'log2FoldChange': log2fc,
@@ -200,7 +191,6 @@ class RNAseqAnalyzer:
             
         plt.figure(figsize=(10, 8))
         
-        # Criar máscaras para diferentes categorias
         sig_up = (self.results['padj'] < alpha) & (self.results['log2FoldChange'] > lfc_threshold)
         sig_down = (self.results['padj'] < alpha) & (self.results['log2FoldChange'] < -lfc_threshold)
         not_sig = ~(sig_up | sig_down)
@@ -221,13 +211,11 @@ class RNAseqAnalyzer:
             -np.log10(self.results.loc[sig_down, 'padj']),
             c='blue', alpha=0.7, label='Down-regulado'
         )
-        
-        # Linhas de corte
+  
         plt.axhline(-np.log10(alpha), linestyle='--', color='black')
         plt.axvline(lfc_threshold, linestyle='--', color='black')
         plt.axvline(-lfc_threshold, linestyle='--', color='black')
-        
-        # Formatação
+
         plt.xlabel('log2 Fold Change')
         plt.ylabel('-log10(p-value ajustado)')
         plt.title(title)
@@ -272,20 +260,16 @@ class RNAseqAnalyzer:
             pathway_genes = set(genes) & background_genes
             pathway_size = len(pathway_genes)
             
-            # Filtrar por tamanho do conjunto
             if not (min_set_size <= pathway_size <= max_set_size):
                 continue
                 
-            # Genes significativos na via
             sig_in_pathway = len(sig_genes & pathway_genes)
-            
-            # Tabela de contingência
+
             contingency_table = [
                 [sig_in_pathway, len(sig_genes) - sig_in_pathway],
                 [pathway_size - sig_in_pathway, len(background_genes) - len(sig_genes) - pathway_size + sig_in_pathway]
             ]
-            
-            # Teste exato de Fisher
+
             _, pval = stats.fisher_exact(contingency_table, alternative='greater')
             
             enrichment_results.append({
@@ -301,16 +285,13 @@ class RNAseqAnalyzer:
             logger.warning("Nenhuma via atendeu aos critérios de tamanho")
             return pd.DataFrame()
             
-        # Criar dataframe de resultados
         enrichment_df = pd.DataFrame(enrichment_results)
         
-        # Correção para múltiplos testes
         _, pvals_adj, _, _ = multipletests(
             enrichment_df['p_value'], method='fdr_bh'
         )
         enrichment_df['p_adj'] = pvals_adj
         
-        # Ordenar por significância
         enrichment_df = enrichment_df.sort_values('p_adj').reset_index(drop=True)
         
         logger.info(f"{len(enrichment_df)} vias analisadas para enriquecimento")
@@ -325,30 +306,26 @@ def example_workflow():
     n_genes = 10000
     n_samples = 12
     
-    # Gerar matriz de contagens (distribuição negativa binomial)
     counts = pd.DataFrame(
         np.random.negative_binomial(5, 0.1, size=(n_genes, n_samples)),
         index=[f"Gene_{i}" for i in range(n_genes)],
         columns=[f"Sample_{i}" for i in range(n_samples)]
     )
     
-    # Adicionar alguns genes diferencialmente expressos
     de_genes = np.random.choice(n_genes, size=200, replace=False)
     counts.iloc[de_genes[:100], :6] *= 4  # Up no grupo A
     counts.iloc[de_genes[100:], 6:] *= 4  # Up no grupo B
-    
-    # Metadados
+
     metadata = pd.DataFrame({
         'condition': ['A'] * 6 + ['B'] * 6,
         'batch': ['1'] * 3 + ['2'] * 3 + ['1'] * 3 + ['2'] * 3
     }, index=counts.columns)
     
-    # Análise
+
     analyzer = RNAseqAnalyzer(counts, metadata)
     analyzer.quality_control(min_count=10, min_samples=2)
     analyzer.normalize(method='tmm')
     
-    # Expressão diferencial
     results = analyzer.differential_expression(
         condition_col='condition',
         control_group='A',
@@ -357,12 +334,10 @@ def example_workflow():
         lfc_threshold=1.0
     )
     
-    # Visualização
     fig = analyzer.plot_volcano(title='A vs B - RNA-Seq Analysis')
     plt.show()
     
-    # Análise de enriquecimento (exemplo com vias simuladas)
-    pathways = {
+    = {
         'Pathway_1': [f"Gene_{i}" for i in range(0, 50)],
         'Pathway_2': [f"Gene_{i}" for i in range(50, 120)],
         'Pathway_3': [f"Gene_{i}" for i in range(120, 200)]
